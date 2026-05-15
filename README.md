@@ -11,23 +11,21 @@ Single Go binary. Self-hosted. MIT.
 ## What is this
 
 [cmux](https://github.com/manaflow-ai/cmux) is a great answer to a real
-problem: when you've got five Claude Code agents running in five panes,
-you can't tell which one is asking you something. cmux solves that with
-a native macOS terminal that adds a notification ring + a sidebar with
+problem: when five Claude Code agents are running in five panes, you
+can't tell which one is asking you something. cmux solves that with a
+native macOS terminal that adds a notification ring + a sidebar with
 git/PR/cwd context. Several people are working on Linux ports.
 
 **Aurex skips the port-per-OS problem entirely.** The server is a single
 Go binary that runs on anything with tmux + a Unix PTY (Linux, macOS,
 BSD, WSL). The client is the *browser* — which means the same polished
-experience on a Mac, a Linux box, a Windows desktop, an iPad, an
-Android phone, or your wife's Chromebook. There's no "wait for the
-Linux build" because there's nothing OS-specific to build.
+experience on a Mac, a Linux box, a Windows desktop, an iPad, an Android
+phone, or a Chromebook. Nothing OS-specific to build.
 
 Same idea cmux is famous for — animated ring on the active-prompt
-session, sidebar with branch/cwd, ghostty-based rendering — but shaped
-as a self-hosted web app you can reach over Tailscale from anywhere.
-The agents still live on your laptop. The control surface comes with
-you.
+session, sidebar with branch/cwd, ghostty-based rendering — shaped as a
+self-hosted web app you can reach over Tailscale from anywhere. The
+agents live on your laptop. The control surface comes with you.
 
 The workflow this is built for:
 
@@ -40,14 +38,13 @@ The workflow this is built for:
 
 ## Why it exists
 
-Running a powerful local agent and then having to babysit it at your desk
-defeats the point. With aurex you get all the privacy and capability of a
-locally-run agent, plus the "I can step away from my desk" affordance
-that hosted services give you for free.
+A locally-run agent gives you privacy and capability. Aurex adds the
+"I can step away from my desk" affordance that hosted services give you
+for free, without giving up either of the first two.
 
 ---
 
-## Architecture (the polished bits)
+## Architecture
 
 - **One PTY per session, owned by the server.** WebSockets are
   subscribers, not attachers — disconnect, refresh, switch devices and
@@ -57,33 +54,32 @@ that hosted services give you for free.
   [opencode](https://github.com/sst/opencode)'s design). Clients pass
   their last cursor on reconnect and get only what they missed.
 - **Ghostty-web renderer.** libghostty compiled to WASM — real VT100,
-  grapheme handling, the works. Not xterm.js.
+  grapheme handling, the works.
 - **Tailscale-issued real cert.** When Tailscale is present aurex pulls
   a Let's Encrypt cert via `tailscale cert` for the magic-DNS hostname
-  and auto-renews. No self-signed cert nonsense.
+  and auto-renews.
 
 ---
 
-## Why Tailscale (the cert story)
+## Why Tailscale
 
-The only thing in aurex that needs HTTPS is **web push** — browsers
-won't deliver push notifications to an insecure origin. Without push you
-still get a working terminal, just no buzz on your phone when an agent
-asks you something.
+Web push notifications require a secure context — browsers won't deliver
+push to an insecure origin. Aurex relies on Tailscale to provide that
+secure context with a real cert, because the alternative (installing a
+self-signed CA on a phone) is a multi-step OS-settings ritual that often
+fails on its own.
 
-Aurex deliberately doesn't generate self-signed certs anymore. Installing
-a self-signed CA on a phone is a 12-step Android Settings ritual that
-half the time still doesn't work. Tailscale gives you:
+Tailscale gives you two things at once:
 
-1. A real, browser-trusted cert (free) for a stable hostname.
-2. Remote access from anywhere — your phone reaches your laptop over the
-   tailnet whether you're at home, at a coffee shop, or on cellular.
+1. A real, browser-trusted cert for a stable hostname.
+2. Remote access from anywhere — your phone reaches your laptop over
+   the tailnet whether you're at home, at a coffee shop, or on cellular.
 
 For the "let me check on my agent from anywhere" use case, you wanted
-something like Tailscale on your phone anyway. Aurex just leans into it.
+something like Tailscale on your phone anyway. Aurex leans into it.
 
-If you really want to run on plain LAN HTTP without push notifications,
-set `"tailscale": "off"` in the config.
+To run on plain LAN HTTP without push notifications, set
+`"tailscale": "off"` in the config.
 
 ---
 
@@ -99,7 +95,7 @@ set `"tailscale": "off"` in the config.
 ```bash
 sudo tailscale set --operator=$USER     # let aurex fetch certs unprivileged
 ```
-Then enable HTTPS in the admin console:
+Enable HTTPS in the admin console:
 <https://login.tailscale.com/admin/dns> → "Enable HTTPS…".
 
 ### Run from a release binary
@@ -127,7 +123,7 @@ cd .. && go build -o aurex .
 
 ## Agent hooks
 
-To trigger the aura/push without relying on output regex, agents can
+To trigger the aura and push without relying on output regex, agents can
 poke a localhost endpoint:
 
 ```bash
@@ -166,9 +162,7 @@ to send the control code.
 
 ## Config
 
-First run writes `aurex.config.json` in the working directory. Defaults
-shown below; VAPID push keys are generated and persisted on first run
-(**don't regenerate** — that invalidates every push subscription):
+First run writes `aurex.config.json` in the working directory. Defaults:
 
 ```json
 {
@@ -186,17 +180,19 @@ shown below; VAPID push keys are generated and persisted on first run
 }
 ```
 
-`tailscale` accepts `"auto"` (default; use Tailscale if available, fall
-back to plain HTTP), `"on"` (require Tailscale, refuse to start without
-it), or `"off"` (skip TLS, HTTP only — push won't work).
+VAPID push keys are generated and persisted on first run. Don't
+regenerate — that invalidates every push subscription.
+
+`tailscale` accepts `"auto"` (use Tailscale if available, fall back to
+plain HTTP), `"on"` (require Tailscale, refuse to start without it), or
+`"off"` (skip TLS, HTTP only — push won't work).
 
 ---
 
 ## Status
 
-**v0.1.0** — early, single-author, self-hosted. A SaaS variant with a
-hosted relay is on the medium-term roadmap; this OSS binary will always
-be free and MIT.
+**v0.1.0.** A SaaS variant with a hosted relay is on the roadmap; this
+OSS binary will always be free and MIT.
 
 ## License
 
