@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -29,7 +30,15 @@ func hookAuraHandler(store *SessionStore, push *PushManager) http.HandlerFunc {
 
 		sess := resolveSession(store, payload.Session)
 		if sess == nil {
-			http.Error(w, "session not found", http.StatusNotFound)
+			// Common cause: hook payload omitted "session" and multiple
+			// sessions exist, so resolveSession can't disambiguate. Log
+			// helpful diagnostics rather than a silent 404.
+			names := make([]string, 0)
+			for _, s := range store.List() {
+				names = append(names, s.TmuxName)
+			}
+			log.Printf("hook: no session match for %q (active sessions: %v)", payload.Session, names)
+			http.Error(w, "session not found — pass \"session\": \"<tmux-name>\" in payload", http.StatusNotFound)
 			return
 		}
 

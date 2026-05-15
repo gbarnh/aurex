@@ -142,16 +142,24 @@ cd .. && go build -o aurex .
 
 ## Agent hooks
 
-To trigger the aura and push without relying on output regex, agents can
-poke a localhost endpoint:
+To trigger the aura and push without relying on output regex, agents
+POST to a localhost endpoint with the **tmux session name** they're
+running inside:
 
 ```bash
 curl -s -X POST http://localhost:7681/api/hook/aura \
   -H 'Content-Type: application/json' \
-  -d '{"active": true, "reason": "Claude is waiting for input"}'
+  -d "{\"active\": true, \"reason\": \"Claude is waiting for input\", \"session\": \"$(tmux display-message -p '#S')\"}"
 ```
 
+The `session` field is required when multiple sessions exist — the
+server needs to know which session's ring to glow. `tmux display-message
+-p '#S'` returns the current tmux session name (e.g. `aurex-958dfcfb`)
+when the command runs inside one, which is exactly what aurex uses
+internally.
+
 For Claude Code, add to `.claude/settings.json`:
+
 ```json
 {
   "hooks": {
@@ -159,12 +167,16 @@ For Claude Code, add to `.claude/settings.json`:
       "matcher": "",
       "hooks": [{
         "type": "command",
-        "command": "curl -s -X POST http://localhost:7681/api/hook/aura -H 'Content-Type: application/json' -d '{\"active\":true,\"reason\":\"Claude is waiting for input\"}'"
+        "command": "curl -s -X POST http://localhost:7681/api/hook/aura -H 'Content-Type: application/json' -d \"{\\\"active\\\":true,\\\"reason\\\":\\\"Claude is waiting for input\\\",\\\"session\\\":\\\"$(tmux display-message -p '#S' 2>/dev/null)\\\"}\""
       }]
     }]
   }
 }
 ```
+
+If the hook is missing or has no session field and you have multiple
+sessions, aurex logs `hook: no session match for "" (active sessions:
+[...])`. Use that to verify the names you should send.
 
 ---
 
