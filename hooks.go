@@ -69,19 +69,18 @@ func hookAuraHandler(store *SessionStore, push *PushManager) http.HandlerFunc {
 			if reason == "" {
 				reason = "Agent is waiting for input"
 			}
-			store.SetAura(sess, true, reason)
-			// Push suppression: skip phone notifications when a laptop/desktop
-			// browser has aurex's tab in the foreground (visibility=visible).
-			// In that case the user is at the laptop watching the aura ring
-			// directly and a phone buzz is just noise.
-			if push != nil && !desktopForegroundActive(sess) {
+			_, edgeOn := store.SetAura(sess, true, reason)
+			// Only push when aura transitions off→on. The same hook firing
+			// twice (or another detector firing too) just sets aura to the
+			// same value and gets edgeOn=false here, no double-buzz.
+			if edgeOn && push != nil && !desktopForegroundActive(sess) {
 				push.Notify(NotificationPayload{
 					Title:     sess.Name,
 					Body:      reason,
 					SessionID: sess.ID,
 					Tag:       "aurex-" + sess.ID,
 				})
-			} else if push != nil {
+			} else if edgeOn && push != nil {
 				log.Printf("hook: %s aura set; push suppressed (laptop foreground)", sess.TmuxName)
 			}
 		} else {

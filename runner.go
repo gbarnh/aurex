@@ -295,7 +295,10 @@ func handleOSCBody(sess *Session, store *SessionStore, push *PushManager, body s
 	if reason == "" {
 		reason = "Agent is waiting for input"
 	}
-	store.SetAura(sess, true, reason)
+	_, edgeOn := store.SetAura(sess, true, reason)
+	if !edgeOn {
+		return
+	}
 	if push != nil && !desktopForegroundActive(sess) {
 		push.Notify(NotificationPayload{
 			Title:     sess.Name,
@@ -321,7 +324,11 @@ func detectAura(sess *Session, store *SessionStore, push *PushManager, tail *str
 	for _, pat := range auraPatterns {
 		if pat.MatchString(t) {
 			reason := lastLine(t, 100)
-			store.SetAura(sess, true, reason)
+			_, edgeOn := store.SetAura(sess, true, reason)
+			tail.Reset()
+			if !edgeOn {
+				return
+			}
 			if push != nil && !desktopForegroundActive(sess) {
 				push.Notify(NotificationPayload{
 					Title:     sess.Name,
@@ -330,7 +337,6 @@ func detectAura(sess *Session, store *SessionStore, push *PushManager, tail *str
 					Tag:       "aurex-" + sess.ID,
 				})
 			}
-			tail.Reset()
 			return
 		}
 	}

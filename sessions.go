@@ -260,16 +260,23 @@ func (s *SessionStore) Delete(id string) error {
 	return nil
 }
 
-// SetAura toggles the aura flag and broadcasts the change.
-func (s *SessionStore) SetAura(sess *Session, active bool, reason string) {
+// SetAura toggles the aura flag and broadcasts the change. Returns
+// (changed, edgeOn) — changed=true if anything mutated, edgeOn=true if this
+// call took aura from off→on. Push-firing call sites should check edgeOn so
+// they only buzz the phone on transitions, not on every TUI redraw that
+// re-matches a regex.
+func (s *SessionStore) SetAura(sess *Session, active bool, reason string) (changed, edgeOn bool) {
 	sess.mu.Lock()
-	changed := sess.Aura != active || sess.AuraReason != reason
+	prev := sess.Aura
+	changed = sess.Aura != active || sess.AuraReason != reason
+	edgeOn = active && !prev
 	sess.Aura = active
 	sess.AuraReason = reason
 	sess.mu.Unlock()
 	if changed {
 		s.notifyUpdate(sess)
 	}
+	return
 }
 
 // ClearAura is called when the user types into a session. No-op if not glowing.
@@ -352,7 +359,10 @@ func (s *SessionStore) PollIdle(stop <-chan struct{}) {
 				// don't fire again until the screen changes and goes idle
 				// again.
 				delete(prev, sess.ID)
-				s.SetAura(sess, true, "Agent idle — likely waiting for input")
+				_, edgeOn := s.SetAura(sess, true, "Agent idle — likely waiting for input")
+				if !edgeOn {
+					continue // already on; don't re-push
+				}
 				suppressed := desktopForegroundActive(sess)
 				log.Printf("idle: %s went idle (push %s)", sess.TmuxName,
 					ternary(suppressed, "suppressed: laptop foreground", "firing"))
