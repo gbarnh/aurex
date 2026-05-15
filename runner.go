@@ -152,6 +152,7 @@ func runCapture(sess *Session, store *SessionStore, push *PushManager) {
 			data := make([]byte, n)
 			copy(data, buf[:n])
 			cursor := sess.buffer.Append(data)
+			sess.markOutput()
 			broadcast(sess, SubscriberMessage{
 				Type:   "output",
 				Data:   string(data),

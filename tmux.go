@@ -43,6 +43,33 @@ func TmuxNewSession(name, shell string) error {
 	return nil
 }
 
+// TmuxConfigureSilenceHook wires "agent went idle" detection into tmux:
+//
+//  1. monitor-silence N — window option; fires the alert-silence hook after
+//     N seconds of no output in the pane.
+//  2. silence-action none — suppresses tmux's bell/banner; aurex handles the
+//     user-facing notification itself.
+//  3. alert-silence hook (server-global) — runs a curl that POSTs to aurex's
+//     /api/hook/aura with the firing session's name substituted at hook time.
+//
+// monitor-silence is per-window; alert-silence is the hook tmux calls for
+// any window's silence event, so we set it once globally and let the
+// #{session_name} format pick the right session at fire time. Idempotent:
+// set-hook -R replaces an existing hook of the same name.
+func TmuxConfigureSilenceHook(name string, intervalSec, port int) {
+	// Apply per-window settings to every window in this session (in practice
+	// each aurex session has exactly one window).
+	_ = exec.Command("tmux", "set-window-option", "-t", name, "monitor-silence", fmt.Sprintf("%d", intervalSec)).Run()
+	_ = exec.Command("tmux", "set-window-option", "-t", name, "silence-action", "none").Run()
+
+	hookCmd := fmt.Sprintf(
+		`run-shell -b "curl -s -m 2 -X POST -d active=true -d 'reason=Agent idle' -d 'session=#{session_name}' http://127.0.0.1:%d/api/hook/aura"`,
+		port,
+	)
+	// Global alert-silence so every session's silence event fires it.
+	_ = exec.Command("tmux", "set-hook", "-g", "-R", "alert-silence", hookCmd).Run()
+}
+
 // TmuxKillSession terminates the named tmux session.
 func TmuxKillSession(name string) error {
 	cmd := exec.Command("tmux", "kill-session", "-t", name)

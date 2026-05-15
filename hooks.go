@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -12,6 +13,27 @@ type hookPayload struct {
 	Session string `json:"session"`
 	Reason  string `json:"reason"`
 	Active  bool   `json:"active"`
+}
+
+// parseHookPayload accepts both JSON and form-encoded bodies. Form encoding
+// makes it easy to call this from a tmux `run-shell` hook without battling
+// nested quotes — `curl -d active=true -d session=… -d reason=…` is enough.
+func parseHookPayload(r *http.Request) (hookPayload, error) {
+	var p hookPayload
+	ct := r.Header.Get("Content-Type")
+	if strings.Contains(ct, "application/json") {
+		err := json.NewDecoder(r.Body).Decode(&p)
+		return p, err
+	}
+	if err := r.ParseForm(); err != nil {
+		return p, err
+	}
+	p.Session = r.Form.Get("session")
+	p.Reason = r.Form.Get("reason")
+	if v := r.Form.Get("active"); v != "" {
+		p.Active, _ = strconv.ParseBool(v)
+	}
+	return p, nil
 }
 
 // hookAuraHandler is exposed at POST /api/hook/aura. It is intentionally unauthenticated
@@ -22,9 +44,9 @@ func hookAuraHandler(store *SessionStore, push *PushManager) http.HandlerFunc {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		var payload hookPayload
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
+		payload, err := parseHookPayload(r)
+		if err != nil {
+			http.Error(w, "bad body", http.StatusBadRequest)
 			return
 		}
 

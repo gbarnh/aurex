@@ -43,6 +43,33 @@ type Session struct {
 
 	subMu      sync.Mutex
 	activeSubs map[*Subscriber]bool
+
+	// lastOutputAt is set whenever the PTY emits a byte. The idle detector
+	// reads it on a ticker and flips the aura on when the gap since the
+	// last byte exceeds the configured silence threshold.
+	lastOutputMu sync.Mutex
+	lastOutputAt time.Time
+}
+
+// markOutput records that bytes were just emitted by the PTY. The idle
+// detector uses this to decide whether the session is silent enough to
+// be considered "agent waiting."
+func (s *Session) markOutput() {
+	s.lastOutputMu.Lock()
+	s.lastOutputAt = time.Now()
+	s.lastOutputMu.Unlock()
+}
+
+// IdleFor returns how long it's been since the last PTY output.
+// Returns 0 if no output has been recorded yet.
+func (s *Session) IdleFor() time.Duration {
+	s.lastOutputMu.Lock()
+	t := s.lastOutputAt
+	s.lastOutputMu.Unlock()
+	if t.IsZero() {
+		return 0
+	}
+	return time.Since(t)
 }
 
 // Cursor returns the current end-of-stream byte cursor for this session.
@@ -54,22 +81,32 @@ func (s *Session) Cursor() int64 {
 }
 
 type SessionStore struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
-	prefix   string
-	shell    string
-	push     *PushManager
+	mu        sync.RWMutex
+	sessions  map[string]*Session
+	prefix    string
+	shell     string
+	push      *PushManager
+	hookPort  int // tmux silence hook curls http://127.0.0.1:<hookPort>/api/hook/aura
+	silenceSec int // seconds of pane silence that fires the aura
 
 	// onUpdate is called whenever a session is created, deleted, or mutated.
 	onUpdate func(*Session)
 }
 
-func NewSessionStore(prefix, shell string, push *PushManager) *SessionStore {
+func NewSessionStore(prefix, shell string, push *PushManager, hookPort, silenceSec int) *SessionStore {
+	if hookPort <= 0 {
+		hookPort = 7681
+	}
+	if silenceSec <= 0 {
+		silenceSec = 5
+	}
 	return &SessionStore{
-		sessions: make(map[string]*Session),
-		prefix:   prefix,
-		shell:    shell,
-		push:     push,
+		sessions:   make(map[string]*Session),
+		prefix:     prefix,
+		shell:      shell,
+		push:       push,
+		hookPort:   hookPort,
+		silenceSec: silenceSec,
 	}
 }
 
@@ -96,6 +133,7 @@ func (s *SessionStore) Create(name string) (*Session, error) {
 	if err := TmuxNewSession(tmuxName, s.shell); err != nil {
 		return nil, err
 	}
+	TmuxConfigureSilenceHook(tmuxName, s.silenceSec, s.hookPort)
 	sess := &Session{
 		ID:         id,
 		Name:       name,
@@ -140,6 +178,7 @@ func (s *SessionStore) AdoptExisting() error {
 		_ = exec.Command("tmux", "set-option", "-t", n, "mouse", "on").Run()
 		_ = exec.Command("tmux", "set-option", "-t", n, "status", "off").Run()
 		_ = exec.Command("tmux", "set-option", "-t", n, "allow-passthrough", "on").Run()
+		TmuxConfigureSilenceHook(n, s.silenceSec, s.hookPort)
 		if err := startSession(sess, s, s.push); err != nil {
 			log.Printf("aurex: start adopted session %s: %v", n, err)
 		}
@@ -250,6 +289,124 @@ func (s *SessionStore) notifyUpdate(sess *Session) {
 	if s.onUpdate != nil {
 		s.onUpdate(sess)
 	}
+}
+
+// PollIdle watches every session's *visible* pane content and flips the aura
+// on when the content hasn't changed for the configured silence threshold.
+//
+// We can't use raw byte-level idle because agent TUIs (claude code, codex,
+// etc.) render cursor blinks and other animations every second or so — the
+// PTY stream is never truly silent while a TUI is active. Hashing what tmux
+// would print to the screen (via capture-pane, which excludes the live cursor
+// position) is stable across cosmetic redraws and only changes when actual
+// text changes — which is exactly "agent printed something new" vs "agent
+// is sitting at a prompt waiting."
+//
+// On first observation of a session, we record its hash. When the hash stops
+// changing for s.silenceSec seconds, the aura fires. The hash state is
+// cleared when the aura fires (or is manually cleared) so the cycle can
+// repeat after the user responds.
+func (s *SessionStore) PollIdle(stop <-chan struct{}) {
+	if s.silenceSec <= 0 {
+		return
+	}
+	threshold := time.Duration(s.silenceSec) * time.Second
+	t := time.NewTicker(1 * time.Second)
+	defer t.Stop()
+
+	type state struct {
+		hash       uint64
+		stableSince time.Time
+	}
+	prev := map[string]state{}
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			seen := map[string]bool{}
+			for _, sess := range s.List() {
+				seen[sess.ID] = true
+				sess.mu.Lock()
+				auraOn := sess.Aura
+				sess.mu.Unlock()
+				if auraOn {
+					delete(prev, sess.ID)
+					continue
+				}
+				content, err := tmuxCapturePaneText(sess.TmuxName)
+				if err != nil || len(content) == 0 {
+					continue
+				}
+				h := fnv64a(content)
+				st, ok := prev[sess.ID]
+				if !ok || st.hash != h {
+					prev[sess.ID] = state{hash: h, stableSince: time.Now()}
+					continue
+				}
+				if time.Since(st.stableSince) < threshold {
+					continue
+				}
+				// Stable long enough — fire the aura, clear our state so we
+				// don't fire again until the screen changes and goes idle
+				// again.
+				delete(prev, sess.ID)
+				s.SetAura(sess, true, "Agent idle — likely waiting for input")
+				suppressed := desktopForegroundActive(sess)
+				log.Printf("idle: %s went idle (push %s)", sess.TmuxName,
+					ternary(suppressed, "suppressed: laptop foreground", "firing"))
+				if s.push != nil && !suppressed {
+					res := s.push.Notify(NotificationPayload{
+						Title:     sess.Name,
+						Body:      "Agent idle — likely waiting for input",
+						SessionID: sess.ID,
+						Tag:       "aurex-" + sess.ID,
+					})
+					log.Printf("idle: %s push → total=%d sent=%d failed=%d lastErr=%q",
+						sess.TmuxName, res.Total, res.Sent, res.Failed, res.LastErr)
+				}
+			}
+			// Drop state for sessions that no longer exist.
+			for id := range prev {
+				if !seen[id] {
+					delete(prev, id)
+				}
+			}
+		}
+	}
+}
+
+// tmuxCapturePaneText returns the rendered text of the session's active pane
+// (no escape codes). Used by the idle detector to hash the logical screen
+// state, ignoring cursor-blink and similar cosmetic byte churn.
+func tmuxCapturePaneText(name string) ([]byte, error) {
+	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", name).Output()
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ternary is a tiny string conditional for log lines.
+func ternary(cond bool, a, b string) string {
+	if cond {
+		return a
+	}
+	return b
+}
+
+// fnv64a is the FNV-1a 64-bit hash. Non-cryptographic but plenty for change
+// detection. Inlined to keep the dependency surface small.
+func fnv64a(data []byte) uint64 {
+	const offset64 = 14695981039346656037
+	const prime64 = 1099511628211
+	var h uint64 = offset64
+	for _, b := range data {
+		h ^= uint64(b)
+		h *= prime64
+	}
+	return h
 }
 
 // PollMetadata refreshes CWD + git branch for every session every interval.

@@ -39,6 +39,12 @@ type Config struct {
 
 	PushSubscriptionsFile string `json:"pushSubscriptionsFile"`
 
+	// SilenceSeconds: how long a pane has to be quiet before aurex fires its
+	// "agent waiting" aura. Backed by tmux's monitor-silence + alert-silence
+	// hook so it requires no agent-side config. Tune up if long-running
+	// builds or thinking phases are creating false positives.
+	SilenceSeconds int `json:"silenceSeconds"`
+
 	path string
 }
 
@@ -63,6 +69,7 @@ func LoadConfig() (*Config, error) {
 		TailscaleCertFile:     "aurex.ts.cert.pem",
 		TailscaleKeyFile:      "aurex.ts.key.pem",
 		PushSubscriptionsFile: "aurex.subscriptions.json",
+		SilenceSeconds:        5,
 		path:                  path,
 	}
 
@@ -119,6 +126,10 @@ func LoadConfig() (*Config, error) {
 	}
 	if cfg.PushSubscriptionsFile == "" {
 		cfg.PushSubscriptionsFile = "aurex.subscriptions.json"
+		dirty = true
+	}
+	if cfg.SilenceSeconds <= 0 {
+		cfg.SilenceSeconds = 5
 		dirty = true
 	}
 	if dirty {

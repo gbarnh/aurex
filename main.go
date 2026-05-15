@@ -35,7 +35,7 @@ func main() {
 	}
 
 	push := NewPushManager(cfg.VapidPublicKey, cfg.VapidPrivateKey, cfg.PushSubscriptionsFile)
-	store := NewSessionStore(cfg.TmuxPrefix, cfg.DefaultShell, push)
+	store := NewSessionStore(cfg.TmuxPrefix, cfg.DefaultShell, push, cfg.Port, cfg.SilenceSeconds)
 	if err := store.AdoptExisting(); err != nil {
 		log.Printf("aurex: adopt existing tmux sessions: %v", err)
 	}
@@ -45,6 +45,7 @@ func main() {
 
 	stop := make(chan struct{})
 	go store.PollMetadata(3*time.Second, stop)
+	go store.PollIdle(stop)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	httpServer := &http.Server{
