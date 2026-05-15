@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/gorilla/websocket"
@@ -28,6 +29,21 @@ func forceTmuxRedraw(tmuxName string) {
 	_ = exec.Command("tmux", "refresh-client", "-t", first).Run()
 }
 
+// mobileUARegex matches typical phone user-agent fragments.
+// Tablets (iPad, large Android tablets) intentionally classify as ClassDesktop
+// since a tablet sitting on the desk next to a laptop is closer to "at the
+// machine" than "remote on a phone".
+var mobileUARegex = regexp.MustCompile(`(?i)\b(iPhone|Android.*Mobile|IEMobile|Opera Mini)\b`)
+
+// classifyClient picks a SubscriberClass from a request's User-Agent. Phones
+// are anything matching the mobile regex; everything else is desktop.
+func classifyClient(userAgent string) SubscriberClass {
+	if mobileUARegex.MatchString(userAgent) {
+		return ClassPhone
+	}
+	return ClassDesktop
+}
+
 // AttachSubscriber wires a WebSocket conn to an existing session.
 //
 // Protocol on connect:
@@ -41,10 +57,10 @@ func forceTmuxRedraw(tmuxName string) {
 //
 // cursor is read from the URL but currently unused; kept for protocol
 // compatibility and possible future replay support.
-func AttachSubscriber(sess *Session, store *SessionStore, conn *websocket.Conn, cursor int64) {
+func AttachSubscriber(sess *Session, store *SessionStore, conn *websocket.Conn, cursor int64, class SubscriberClass) {
 	_ = cursor
 
-	sub := newSubscriber(conn)
+	sub := newSubscriber(conn, class)
 
 	sess.subMu.Lock()
 	sess.activeSubs[sub] = true
@@ -90,6 +106,15 @@ func AttachSubscriber(sess *Session, store *SessionStore, conn *websocket.Conn, 
 			WriteInput(sess, store, s)
 		case "resize":
 			ResizePTY(sess, msg.Cols, msg.Rows)
+		case "visibility":
+			// {"type":"visibility","data":"visible"|"hidden"}
+			var state string
+			if err := json.Unmarshal(msg.Data, &state); err != nil {
+				continue
+			}
+			sess.subMu.Lock()
+			sub.visible = state == "visible"
+			sess.subMu.Unlock()
 		}
 	}
 }

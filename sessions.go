@@ -135,9 +135,11 @@ func (s *SessionStore) AdoptExisting() error {
 			buffer:     NewOutputBuffer(2 << 20),
 			activeSubs: make(map[*Subscriber]bool),
 		}
-		// Idempotently enable mouse mode + disable status bar on adopted sessions.
+		// Idempotently enable mouse mode + disable status bar + allow OSC
+		// passthrough on adopted sessions (no-op if already set).
 		_ = exec.Command("tmux", "set-option", "-t", n, "mouse", "on").Run()
 		_ = exec.Command("tmux", "set-option", "-t", n, "status", "off").Run()
+		_ = exec.Command("tmux", "set-option", "-t", n, "allow-passthrough", "on").Run()
 		if err := startSession(sess, s, s.push); err != nil {
 			log.Printf("aurex: start adopted session %s: %v", n, err)
 		}

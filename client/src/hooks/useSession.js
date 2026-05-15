@@ -71,10 +71,27 @@ export function useSession({ sessionId, onData, onSessionUpdate, onSessionsList,
       );
       wsRef.current = ws;
 
+      const sendVisibility = () => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        ws.send(
+          JSON.stringify({
+            type: 'visibility',
+            data: document.visibilityState,
+          }),
+        );
+      };
+
       ws.onopen = () => {
         setConnected(true);
+        sendVisibility(); // initial state
         handlersRef.current.onOpen?.();
       };
+
+      // Re-send whenever the tab focus state changes. The server uses this to
+      // decide whether to push to the phone — if a laptop tab is foregrounded
+      // we don't fire a phone push.
+      document.addEventListener('visibilitychange', sendVisibility);
+      ws._visibilityListener = sendVisibility;
       ws.onclose = () => {
         setConnected(false);
         wsRef.current = null;
@@ -113,6 +130,9 @@ export function useSession({ sessionId, onData, onSessionUpdate, onSessionsList,
       cancelled = true;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (wsRef.current) {
+        if (wsRef.current._visibilityListener) {
+          document.removeEventListener('visibilitychange', wsRef.current._visibilityListener);
+        }
         // Null out ALL handlers — close() is async, so onmessage events for
         // bytes already in the receive buffer can still fire after close().
         // If we don't suppress them they cross into the NEW session's ghostty

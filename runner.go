@@ -44,18 +44,38 @@ type SubscriberMessage struct {
 	rawPayload []byte `json:"-"`
 }
 
+// SubscriberClass distinguishes phone-like clients from laptop/desktop-like
+// ones. Used by push-suppression logic in the hook handler — when a laptop
+// has aurex's tab in the foreground, we don't fire a phone push.
+type SubscriberClass int
+
+const (
+	ClassDesktop SubscriberClass = iota
+	ClassPhone
+)
+
 // Subscriber is one WebSocket attached to a session. Writes go through a
 // channel so multiple producers (broadcast goroutine, replay) don't race on
 // the same conn.
 type Subscriber struct {
-	conn *websocket.Conn
-	send chan SubscriberMessage
-	stop chan struct{}
+	conn    *websocket.Conn
+	send    chan SubscriberMessage
+	stop    chan struct{}
+	class   SubscriberClass
+	visible bool // last-known browser tab visibility — drives push suppression
 }
 
-func newSubscriber(conn *websocket.Conn) *Subscriber {
+// IsForegroundDesktop reports whether this subscriber is a laptop/desktop
+// client with aurex currently in the foreground (visible).
+func (s *Subscriber) IsForegroundDesktop() bool {
+	return s.class == ClassDesktop && s.visible
+}
+
+func newSubscriber(conn *websocket.Conn, class SubscriberClass) *Subscriber {
 	return &Subscriber{
-		conn: conn,
+		conn:    conn,
+		class:   class,
+		visible: true, // assume visible until the client tells us otherwise
 		// Buffered so the broadcaster can keep moving even if one client is slow.
 		// 64 frames ≈ a few seconds of typical output; beyond that the slow
 		// client gets dropped (writer loop exits, ws gets unsubscribed).
@@ -124,6 +144,7 @@ func startSession(sess *Session, store *SessionStore, push *PushManager) error {
 
 func runCapture(sess *Session, store *SessionStore, push *PushManager) {
 	var auraTail strings.Builder
+	var oscTail []byte // carry partial OSC sequences across read boundaries
 	buf := make([]byte, 8192)
 	for {
 		n, err := sess.pty.Read(buf)
@@ -136,6 +157,7 @@ func runCapture(sess *Session, store *SessionStore, push *PushManager) {
 				Data:   string(data),
 				Cursor: cursor,
 			})
+			oscTail = detectOSCNotifications(sess, store, push, append(oscTail, data...))
 			detectAura(sess, store, push, &auraTail, data)
 		}
 		if err != nil {
@@ -166,6 +188,123 @@ func runCapture(sess *Session, store *SessionStore, push *PushManager) {
 	}
 }
 
+// detectOSCNotifications scans for terminal-native notification escape
+// sequences and fires the aura when one lands. This is the same mechanism
+// cmux uses — OSC 9, 99, and 777 are standard ways for processes to ask the
+// terminal to notify the user.
+//
+//   OSC 9 (iTerm2):       ESC ] 9 ; <message> BEL
+//   OSC 99 (Konsole):     ESC ] 99 ; <message> BEL
+//   OSC 777 (urxvt/rxvt): ESC ] 777 ; notify ; <title> ; <message> BEL
+//
+// BEL = 0x07, or ST terminator (ESC \) is also valid. Sequences can span
+// multiple PTY reads, so we keep a tail of unterminated bytes between calls.
+//
+// Returns the unterminated tail to carry into the next call (capped at 4 KiB
+// so a malformed/unending sequence doesn't grow without bound).
+func detectOSCNotifications(sess *Session, store *SessionStore, push *PushManager, data []byte) []byte {
+	const escape byte = 0x1b
+	const bel byte = 0x07
+	const maxTail = 4096
+
+	out := data
+	for {
+		// Find the next OSC introducer (ESC ]).
+		i := -1
+		for j := 0; j+1 < len(out); j++ {
+			if out[j] == escape && out[j+1] == ']' {
+				i = j
+				break
+			}
+		}
+		if i < 0 {
+			// No OSC start in remaining buffer — discard everything since
+			// nothing partial could become a complete OSC later.
+			return nil
+		}
+
+		// Find a terminator (BEL or ST = ESC \) after i+2.
+		end := -1
+		for j := i + 2; j < len(out); j++ {
+			if out[j] == bel {
+				end = j
+				break
+			}
+			if out[j] == escape && j+1 < len(out) && out[j+1] == '\\' {
+				end = j + 1
+				break
+			}
+		}
+		if end < 0 {
+			// Incomplete OSC — keep as tail for next call. Bound the tail.
+			tail := out[i:]
+			if len(tail) > maxTail {
+				return nil
+			}
+			return tail
+		}
+
+		body := string(out[i+2 : end-(boolToInt(out[end] == '\\'))])
+		// body now reads e.g. "9;Message" or "777;notify;Title;Message".
+		handleOSCBody(sess, store, push, body)
+		out = out[end+1:]
+	}
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func handleOSCBody(sess *Session, store *SessionStore, push *PushManager, body string) {
+	if body == "" {
+		return
+	}
+	// Body format: "<code>;<payload>". Pull the code prefix.
+	semi := strings.IndexByte(body, ';')
+	if semi < 0 {
+		return
+	}
+	code := body[:semi]
+	payload := body[semi+1:]
+
+	var reason string
+	switch code {
+	case "9", "99":
+		// OSC 9 / 99: the whole payload is the message.
+		reason = payload
+	case "777":
+		// OSC 777: "notify;<title>;<message>". Only fire on the "notify" subcommand.
+		if !strings.HasPrefix(payload, "notify;") {
+			return
+		}
+		rest := payload[len("notify;"):]
+		// Prefer the message half if both title and message are present.
+		if i := strings.IndexByte(rest, ';'); i >= 0 {
+			reason = rest[i+1:]
+		} else {
+			reason = rest
+		}
+	default:
+		return
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "Agent is waiting for input"
+	}
+	store.SetAura(sess, true, reason)
+	if push != nil && !desktopForegroundActive(sess) {
+		push.Notify(NotificationPayload{
+			Title:     sess.Name,
+			Body:      reason,
+			SessionID: sess.ID,
+			Tag:       "aurex-" + sess.ID,
+		})
+	}
+}
+
 func detectAura(sess *Session, store *SessionStore, push *PushManager, tail *strings.Builder, data []byte) {
 	clean := stripansi.Strip(string(data))
 	if clean == "" {
@@ -182,7 +321,7 @@ func detectAura(sess *Session, store *SessionStore, push *PushManager, tail *str
 		if pat.MatchString(t) {
 			reason := lastLine(t, 100)
 			store.SetAura(sess, true, reason)
-			if push != nil {
+			if push != nil && !desktopForegroundActive(sess) {
 				push.Notify(NotificationPayload{
 					Title:     sess.Name,
 					Body:      reason,

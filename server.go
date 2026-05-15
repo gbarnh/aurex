@@ -202,7 +202,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if cols > 0 && rows > 0 {
 		ResizePTY(sess, cols, rows)
 	}
-	AttachSubscriber(sess, s.store, conn, cursor)
+	class := classifyClient(r.Header.Get("User-Agent"))
+	AttachSubscriber(sess, s.store, conn, cursor, class)
 }
 
 // BroadcastSessionUpdate fans out session metadata changes (name, aura, cwd,

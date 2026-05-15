@@ -1,3 +1,0 @@
-# Placeholder so the directory exists in a fresh clone.
-# `npm run build` populates this with the actual frontend before `go build`
-# embeds it. See README for the local-build flow.

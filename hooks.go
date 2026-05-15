@@ -48,19 +48,40 @@ func hookAuraHandler(store *SessionStore, push *PushManager) http.HandlerFunc {
 				reason = "Agent is waiting for input"
 			}
 			store.SetAura(sess, true, reason)
-			if push != nil {
+			// Push suppression: skip phone notifications when a laptop/desktop
+			// browser has aurex's tab in the foreground (visibility=visible).
+			// In that case the user is at the laptop watching the aura ring
+			// directly and a phone buzz is just noise.
+			if push != nil && !desktopForegroundActive(sess) {
 				push.Notify(NotificationPayload{
 					Title:     sess.Name,
 					Body:      reason,
 					SessionID: sess.ID,
 					Tag:       "aurex-" + sess.ID,
 				})
+			} else if push != nil {
+				log.Printf("hook: %s aura set; push suppressed (laptop foreground)", sess.TmuxName)
 			}
 		} else {
 			store.ClearAura(sess)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// desktopForegroundActive reports whether any current WebSocket subscriber
+// to this session is a laptop/desktop browser with its tab in the foreground.
+// Drives push suppression — if you're at the laptop watching aurex, we don't
+// also buzz your phone.
+func desktopForegroundActive(sess *Session) bool {
+	sess.subMu.Lock()
+	defer sess.subMu.Unlock()
+	for sub := range sess.activeSubs {
+		if sub.IsForegroundDesktop() {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveSession picks a session from the hook payload. If session is empty and

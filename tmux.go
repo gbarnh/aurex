@@ -35,6 +35,11 @@ func TmuxNewSession(name, shell string) error {
 	// over as you scroll back). With status off, tmux only emits actual pane
 	// content, which flows naturally into linear scrollback.
 	_ = exec.Command("tmux", "set-option", "-t", name, "status", "off").Run()
+	// Let OSC notification sequences (9, 99, 777) from agents pass through
+	// tmux to aurex's PTY capture, so we can detect "agent waiting" without a
+	// shell hook. allow-passthrough is opt-in for safety reasons (escape
+	// injection) — fine for aurex since we control the capture endpoint.
+	_ = exec.Command("tmux", "set-option", "-t", name, "allow-passthrough", "on").Run()
 	return nil
 }
 
