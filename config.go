@@ -18,19 +18,21 @@ type Config struct {
 	VapidPrivateKey string `json:"vapidPrivateKey"`
 	DefaultShell    string `json:"defaultShell"`
 	TmuxPrefix      string `json:"tmuxPrefix"`
-	TLS             bool   `json:"tls"`
-	TLSCertFile     string `json:"tlsCertFile"`
-	TLSKeyFile      string `json:"tlsKeyFile"`
 
 	// HTTPRedirectPort, when non-zero and TLS is on, starts a sibling HTTP
 	// server that 301-redirects every request to the HTTPS origin. Default
-	// 7680 (one below the main port, no privileges needed). Set to 80 and
-	// run aurex with capability/root to capture browsers typing http://host.
+	// 7680 (one below the main port, no privileges needed).
 	HTTPRedirectPort int `json:"httpRedirectPort"`
 
-	// Tailscale: "auto" tries to use the tailnet for a real cert and falls
-	// back to self-signed; "on" requires Tailscale and fails if unavailable;
-	// "off" disables. Cert/key files default to aurex.ts.cert.pem/key.pem.
+	// Tailscale-only TLS. Aurex does not generate self-signed certs — the
+	// install/trust dance on phones is too miserable to be worth it.
+	//
+	//   "auto" (default): try Tailscale; fall back to plain HTTP if unavailable.
+	//   "on":             require Tailscale; refuse to start without it.
+	//   "off":            run HTTP-only, no TLS attempt.
+	//
+	// When TLS is unavailable, push notifications won't work (browsers require
+	// a secure context), but the terminal itself runs fine over plain HTTP on LAN.
 	Tailscale         string `json:"tailscale"`
 	TailscaleCertFile string `json:"tailscaleCertFile"`
 	TailscaleKeyFile  string `json:"tailscaleKeyFile"`
@@ -50,21 +52,18 @@ func defaultConfigPath() string {
 func LoadConfig() (*Config, error) {
 	path := defaultConfigPath()
 	cfg := &Config{
-		Port:              7681,
-		Auth:              false,
-		Username:          "aurex",
-		Password:          "changeme",
-		DefaultShell:      "bash",
-		TmuxPrefix:        "aurex",
-		TLS:               true,
-		TLSCertFile:       "aurex.cert.pem",
-		TLSKeyFile:        "aurex.key.pem",
-		HTTPRedirectPort:  7680,
+		Port:                  7681,
+		Auth:                  false,
+		Username:              "aurex",
+		Password:              "changeme",
+		DefaultShell:          "bash",
+		TmuxPrefix:            "aurex",
+		HTTPRedirectPort:      7680,
 		Tailscale:             "auto",
 		TailscaleCertFile:     "aurex.ts.cert.pem",
 		TailscaleKeyFile:      "aurex.ts.key.pem",
 		PushSubscriptionsFile: "aurex.subscriptions.json",
-		path:              path,
+		path:                  path,
 	}
 
 	data, err := os.ReadFile(path)
@@ -104,14 +103,6 @@ func LoadConfig() (*Config, error) {
 	}
 	if cfg.Port == 0 {
 		cfg.Port = 7681
-		dirty = true
-	}
-	if cfg.TLS && cfg.TLSCertFile == "" {
-		cfg.TLSCertFile = "aurex.cert.pem"
-		dirty = true
-	}
-	if cfg.TLS && cfg.TLSKeyFile == "" {
-		cfg.TLSKeyFile = "aurex.key.pem"
 		dirty = true
 	}
 	if cfg.Tailscale == "" {

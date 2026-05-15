@@ -1,48 +1,93 @@
 # aurex
 
-A self-hosted, browser-based terminal workspace for Linux. Run it on your
-laptop as a single Go binary; open the URL on your phone over Wi-Fi or
-Tailscale and you have a real terminal — persistent tmux sessions, mobile
-key toolbar, and a glowing "aura" ring with web push notifications when
-an AI coding agent (Claude Code, Codex, Aider, …) is waiting for you.
+> Remote orchestration for your AI coding agents. Run Claude Code (or Codex,
+> or Aider) on your laptop; watch and steer it from your phone.
 
-No cloud. No relay. No runtime dependencies beyond tmux. One binary, MIT
-license.
+Single Go binary. Self-hosted. MIT.
 
 ---
 
-## Why
+## What is this
 
-When an agent on your laptop is waiting on a y/n decision and you're three
-rooms away, you want a glance at your phone to be enough. aurex is a tiny
-control surface for that workflow:
+If you've used a tool like [Mux/cmux](https://github.com/coder/mux) for
+running multiple agentic coding sessions in parallel on one machine, aurex
+is the **remote-access counterpart**. The agents still live on your
+laptop. Aurex puts a browser-based terminal in front of every tmux
+session, sends a web push to your phone when an agent is waiting for
+input, and deep-links you back to the exact session that asked.
 
-- **Persistent sessions.** Closing the browser never kills a tmux session
-  — the next connection re-attaches where you left off.
-- **The aura.** Output is regex-matched (or explicitly poked via a hook
-  endpoint). On a match, the session's card in the sidebar gets an
-  animated cyan ring and your phone buzzes with a web push notification.
-  Tap the notification → deep-link to that session.
-- **Real cert, no warnings.** When Tailscale is detected, aurex pulls a
-  Let's Encrypt cert via `tailscale cert` for the magic-DNS hostname,
-  auto-renews daily. Otherwise it ships a self-signed cert with the right
-  SANs for `localhost`+LAN IPs.
-- **Cursor-protocol streaming.** Each session has a 2 MiB ring buffer with
-  a monotonic byte cursor. Refresh, reconnect, switch devices — the new
-  client passes its last cursor and the server fills in everything
-  missed, no lost output.
-- **Ghostty-web renderer.** The browser-side terminal is libghostty
-  compiled to WASM, not xterm.js — proper VT100, grapheme handling,
-  Devanagari/Arabic, the works.
+The intended workflow:
+
+- **Laptop**: agents run, do their thing for minutes-to-hours.
+- **You**: anywhere — couch, errands, in front of a different computer.
+- **Phone**: buzzes when claude/codex/aider hits a y/n prompt. Tap → land
+  in that session's terminal. Type `y`, walk away.
+
+---
+
+## Why it exists
+
+Running a powerful local agent and then having to babysit it at your desk
+defeats the point. With aurex you get all the privacy and capability of a
+locally-run agent, plus the "I can step away from my desk" affordance
+that hosted services give you for free.
+
+---
+
+## Architecture (the polished bits)
+
+- **One PTY per session, owned by the server.** WebSockets are
+  subscribers, not attachers — disconnect, refresh, switch devices and
+  the tmux session stays exactly where it was.
+- **Cursor-protocol streaming.** Each session has a 2 MiB ring buffer
+  with a monotonic byte cursor (modeled on
+  [opencode](https://github.com/sst/opencode)'s design). Clients pass
+  their last cursor on reconnect and get only what they missed.
+- **Ghostty-web renderer.** libghostty compiled to WASM — real VT100,
+  grapheme handling, the works. Not xterm.js.
+- **Tailscale-issued real cert.** When Tailscale is present aurex pulls
+  a Let's Encrypt cert via `tailscale cert` for the magic-DNS hostname
+  and auto-renews. No self-signed cert nonsense.
+
+---
+
+## Why Tailscale (the cert story)
+
+The only thing in aurex that needs HTTPS is **web push** — browsers
+won't deliver push notifications to an insecure origin. Without push you
+still get a working terminal, just no buzz on your phone when an agent
+asks you something.
+
+Aurex deliberately doesn't generate self-signed certs anymore. Installing
+a self-signed CA on a phone is a 12-step Android Settings ritual that
+half the time still doesn't work. Tailscale gives you:
+
+1. A real, browser-trusted cert (free) for a stable hostname.
+2. Remote access from anywhere — your phone reaches your laptop over the
+   tailnet whether you're at home, at a coffee shop, or on cellular.
+
+For the "let me check on my agent from anywhere" use case, you wanted
+something like Tailscale on your phone anyway. Aurex just leans into it.
+
+If you really want to run on plain LAN HTTP without push notifications,
+set `"tailscale": "off"` in the config.
 
 ---
 
 ## Quickstart
 
 ### Prereqs
-- Linux (or macOS in WSL2-equivalent shape).
+- Linux or macOS server (something with tmux + Unix PTY).
 - `tmux` (`apt install tmux`, `dnf install tmux`, `brew install tmux`).
-- Optional: Tailscale, for a real cert and a friction-free phone URL.
+- [Tailscale](https://tailscale.com) on the server and on every device
+  you want to reach it from.
+
+### One-time Tailscale setup
+```bash
+sudo tailscale set --operator=$USER     # let aurex fetch certs unprivileged
+```
+Then enable HTTPS in the admin console:
+<https://login.tailscale.com/admin/dns> → "Enable HTTPS…".
 
 ### Run from a release binary
 ```bash
@@ -51,12 +96,11 @@ chmod +x aurex
 ./aurex
 ```
 
-You'll see:
+Output:
 ```
-aurex: open https://<your-host>.<your-tailnet>.ts.net:7681 on your phone — real cert, no warnings
+aurex: using Tailscale cert for laptop.your-tailnet.ts.net (auto-renew on restart)
+aurex: open https://laptop.your-tailnet.ts.net:7681 on your phone — real cert, no warnings
 ```
-
-(or the self-signed fallback URL if Tailscale isn't set up).
 
 ### Build from source
 ```bash
@@ -68,29 +112,10 @@ cd .. && go build -o aurex .
 
 ---
 
-## Mobile
-
-Open the URL on your phone (same Wi-Fi, or Tailscale). The first time:
-
-1. (Android, self-signed only) Visit `chrome://flags/#unsafely-treat-insecure-origin-as-secure`,
-   add your aurex origin, Relaunch. Or download the cert from the in-app
-   push panel and install it as a CA. **Skip this entirely if you're on
-   Tailscale** — the cert is real.
-2. Tap **Notifications** in the sidebar → **Enable** → grant the system
-   prompt → **Send test** to verify.
-3. Create a session and start your agent. When it asks you something,
-   your phone will buzz.
-
-The toolbar at the bottom of the screen has CTRL / ESC / TAB / arrows —
-the keys phone soft keyboards lack. CTRL is sticky-once: tap CTRL, then a
-letter to send the control code.
-
----
-
 ## Agent hooks
 
-Hooks are the precise way to trigger the aura without relying on output
-regex. They're localhost-only by design.
+To trigger the aura/push without relying on output regex, agents can
+poke a localhost endpoint:
 
 ```bash
 curl -s -X POST http://localhost:7681/api/hook/aura \
@@ -115,9 +140,22 @@ For Claude Code, add to `.claude/settings.json`:
 
 ---
 
+## Mobile
+
+Open the Tailscale URL on your phone. Tap **Notifications** in the
+sidebar → **Enable** → grant the system prompt → **Send test**.
+
+The toolbar below the terminal has CTRL / ESC / TAB / arrows — the keys
+phone soft keyboards lack. CTRL is sticky-once: tap CTRL, then a letter
+to send the control code.
+
+---
+
 ## Config
 
-First run writes `aurex.config.json` in the working directory. Defaults:
+First run writes `aurex.config.json` in the working directory. Defaults
+shown below; VAPID push keys are generated and persisted on first run
+(**don't regenerate** — that invalidates every push subscription):
 
 ```json
 {
@@ -127,39 +165,25 @@ First run writes `aurex.config.json` in the working directory. Defaults:
   "password": "changeme",
   "defaultShell": "bash",
   "tmuxPrefix": "aurex",
-  "tls": true,
-  "tlsCertFile": "aurex.cert.pem",
-  "tlsKeyFile": "aurex.key.pem",
+  "httpRedirectPort": 7680,
   "tailscale": "auto",
   "tailscaleCertFile": "aurex.ts.cert.pem",
-  "tailscaleKeyFile": "aurex.ts.key.pem",
-  "httpRedirectPort": 7680,
+  "tailscaleKeyFile":  "aurex.ts.key.pem",
   "pushSubscriptionsFile": "aurex.subscriptions.json"
 }
 ```
 
-VAPID push keys are generated and written here on first run. **Don't
-regenerate** — that invalidates every push subscription.
-
-The Tailscale path needs two one-time setup steps:
-```bash
-sudo tailscale set --operator=$USER     # let aurex fetch certs unprivileged
-# then enable HTTPS in your tailnet admin console at:
-#   https://login.tailscale.com/admin/dns
-```
+`tailscale` accepts `"auto"` (default; use Tailscale if available, fall
+back to plain HTTP), `"on"` (require Tailscale, refuse to start without
+it), or `"off"` (skip TLS, HTTP only — push won't work).
 
 ---
 
 ## Status
 
-This is **v0.1.0** — early, single-author, self-hosted. It works for my
-"laptop in the office, phone on the couch" workflow and is intentionally
-small. The architecture is modeled after the relevant pieces of
-[opencode](https://github.com/sst/opencode)'s session/PTY/cursor design —
-that's where most of the polish ideas came from.
-
-A SaaS version with a hosted relay is on the medium-term roadmap; this
-OSS binary will always be free and MIT.
+**v0.1.0** — early, single-author, self-hosted. A SaaS variant with a
+hosted relay is on the medium-term roadmap; this OSS binary will always
+be free and MIT.
 
 ## License
 

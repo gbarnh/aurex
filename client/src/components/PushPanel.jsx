@@ -78,48 +78,36 @@ export default function PushPanel({ push, onClose }) {
           </div>
         )}
 
-        {push.swState === 'timeout' && (
-          <div className="mt-3 rounded-md border border-line bg-bg/50 px-3 py-2 text-xs leading-relaxed text-zinc-300">
-            <div className="mb-1 font-medium text-zinc-100">Service worker registration timed out.</div>
-            Chrome treats the page as secure (via flag) but still refuses to run a Service Worker
-            over a cert it doesn't actually trust. Install the cert as a CA on this phone:
-            <ol className="mt-1 list-decimal space-y-1 pl-4 text-zinc-400">
-              <li>Tap <strong>Download cert</strong> below. File will be <code>aurex.crt</code>.</li>
-              <li>
-                <strong>Don't tap the file from Downloads</strong> — that opens the wrong install
-                flow ("private key required"). Instead, open Android <em>Settings → Security &amp;
-                privacy → More security &amp; privacy → Encryption &amp; credentials → Install a
-                certificate</em>.
-              </li>
-              <li>
-                Choose <strong>CA certificate</strong> (not "User certificate" / "VPN &amp; app
-                user certificate"). Accept the "network may be monitored" warning.
-              </li>
-              <li>Pick <code>aurex.crt</code> from Downloads.</li>
-              <li>Reload aurex — SW registration should succeed, then tap <strong>Enable</strong>.</li>
-            </ol>
-            <a
-              href="/aurex.cert.pem"
-              download="aurex.crt"
-              className="mt-2 inline-block rounded-md border border-aura/40 bg-aura/10 px-3 py-1.5 text-aura"
-            >
-              Download cert
-            </a>
-          </div>
-        )}
-
         {!push.isSecure && (
           <div className="mt-3 rounded-md border border-line bg-bg/50 px-3 py-2 text-xs leading-relaxed text-zinc-300">
-            <div className="mb-1 font-medium text-zinc-100">Page is not a secure context.</div>
-            Chrome Android refuses push on self-signed certs. Fix one of:
-            <ul className="mt-1 list-disc space-y-1 pl-4 text-zinc-400">
+            <div className="mb-1 font-medium text-zinc-100">
+              Push notifications need a real HTTPS cert.
+            </div>
+            <p className="mb-2 text-zinc-400">
+              Aurex doesn't ship self-signed certs — installing them on a phone is miserable. The
+              recommended path is Tailscale, which gives this machine a real Let's Encrypt cert
+              for free and lets you reach it from anywhere.
+            </p>
+            <ol className="list-decimal space-y-1 pl-4 text-zinc-400">
+              <li>Install Tailscale on your laptop and your phone, sign in with the same account.</li>
               <li>
-                Open <code className="text-aura">chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>,
-                add this origin, Enabled, Relaunch.
+                Enable HTTPS at{' '}
+                <a
+                  href="https://login.tailscale.com/admin/dns"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-aura underline"
+                >
+                  login.tailscale.com/admin/dns
+                </a>
+                .
               </li>
-              <li>Install <code className="text-aura">aurex.cert.pem</code> as a CA in Android settings.</li>
-              <li>Front aurex with Tailscale serve / a real cert.</li>
-            </ul>
+              <li>
+                On the laptop: <code className="text-aura">sudo tailscale set --operator=$USER</code>{' '}
+                (one-time).
+              </li>
+              <li>Restart aurex and open the <code>https://&lt;host&gt;.&lt;tailnet&gt;.ts.net</code> URL it prints.</li>
+            </ol>
           </div>
         )}
 

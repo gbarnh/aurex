@@ -53,12 +53,6 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/push/test", s.handlePushTest)
 	})
 
-	// Cert download for one-tap install on phones. Auth-free so the user can
-	// grab it before notifications work. Only available when TLS is on.
-	if s.cfg.TLS && s.cfg.TLSCertFile != "" {
-		r.Get("/aurex.cert.pem", s.handleCertDownload)
-	}
-
 	// Hook endpoint is intentionally NOT behind auth — it gates on localhost instead.
 	r.Post("/api/hook/aura", hookAuraHandler(s.store, s.push))
 
@@ -152,15 +146,6 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleVapidPublicKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"publicKey": s.push.PublicKey()})
-}
-
-func (s *Server) handleCertDownload(w http.ResponseWriter, r *http.Request) {
-	// application/x-x509-ca-cert + .crt filename tells Android this is a CA cert,
-	// not a user/client cert. With a .pem extension Android's installer would
-	// default to the user-cert flow and ask for a private key.
-	w.Header().Set("Content-Type", "application/x-x509-ca-cert")
-	w.Header().Set("Content-Disposition", `attachment; filename="aurex.crt"`)
-	http.ServeFile(w, r, s.cfg.TLSCertFile)
 }
 
 func (s *Server) handlePushTest(w http.ResponseWriter, r *http.Request) {
