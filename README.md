@@ -61,44 +61,63 @@ for free, without giving up either of the first two.
 
 ---
 
-## Why Tailscale
+## Two modes
 
-Web push notifications require a secure context — browsers won't deliver
-push to an insecure origin. Aurex relies on Tailscale to provide that
-secure context with a real cert, because the alternative (installing a
-self-signed CA on a phone) is a multi-step OS-settings ritual that often
-fails on its own.
+Aurex runs in two modes depending on whether you want web push
+notifications to your phone.
 
-Tailscale gives you two things at once:
+| | **LAN-only** | **Full (with Tailscale)** |
+|---|---|---|
+| Terminal access | ✓ over `http://host:7681` | ✓ over `https://host.tailnet.ts.net:7681` |
+| Reach from outside LAN | ✗ | ✓ |
+| Web push to phone | ✗ (browsers require HTTPS) | ✓ |
+| Setup | none beyond `tmux` | install Tailscale, one config knob |
+| Cert | none | real Let's Encrypt, auto-renewing |
 
-1. A real, browser-trusted cert for a stable hostname.
-2. Remote access from anywhere — your phone reaches your laptop over
-   the tailnet whether you're at home, at a coffee shop, or on cellular.
-
-For the "let me check on my agent from anywhere" use case, you wanted
-something like Tailscale on your phone anyway. Aurex leans into it.
-
-To run on plain LAN HTTP without push notifications, set
-`"tailscale": "off"` in the config.
+If you're happy staying on your home network and don't need a buzz on
+your phone when an agent asks something, skip Tailscale entirely. The
+terminal, sidebar, sessions, hooks, and everything else work over plain
+HTTP. Push notifications are the only feature gated on HTTPS, and the
+only reason aurex involves Tailscale at all.
 
 ---
 
 ## Quickstart
 
-### Prereqs
+### Prereqs (both modes)
 - Linux or macOS server (something with tmux + Unix PTY).
 - `tmux` (`apt install tmux`, `dnf install tmux`, `brew install tmux`).
-- [Tailscale](https://tailscale.com) on the server and on every device
-  you want to reach it from.
 
-### One-time Tailscale setup
+### LAN-only (no Tailscale, no push)
+
+Set `"tailscale": "off"` in `aurex.config.json` once it's been generated
+(or do it on first run by creating the file beforehand). Then:
+
+```bash
+curl -fsSL https://github.com/gbarnh/aurex/releases/latest/download/aurex-linux-amd64 -o aurex
+chmod +x aurex
+./aurex
+```
+
+Output:
+```
+aurex: listening on http://0.0.0.0:7681 — install Tailscale and set HTTPS in the admin console for push notifications
+```
+
+Open `http://<server-LAN-IP>:7681` from any device on the same network.
+
+### Full mode (Tailscale + push)
+
+One-time Tailscale setup:
 ```bash
 sudo tailscale set --operator=$USER     # let aurex fetch certs unprivileged
 ```
 Enable HTTPS in the admin console:
 <https://login.tailscale.com/admin/dns> → "Enable HTTPS…".
 
-### Run from a release binary
+Then install Tailscale on every device you want to reach the server
+from (phone included) and run aurex:
+
 ```bash
 curl -fsSL https://github.com/gbarnh/aurex/releases/latest/download/aurex-linux-amd64 -o aurex
 chmod +x aurex
