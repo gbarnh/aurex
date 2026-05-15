@@ -49,10 +49,11 @@ for free, without giving up either of the first two.
 - **One PTY per session, owned by the server.** WebSockets are
   subscribers, not attachers — disconnect, refresh, switch devices and
   the tmux session stays exactly where it was.
-- **Cursor-protocol streaming.** Each session has a 2 MiB ring buffer
-  with a monotonic byte cursor (modeled on
-  [opencode](https://github.com/sst/opencode)'s design). Clients pass
-  their last cursor on reconnect and get only what they missed.
+- **Server-driven redraws.** On every new WebSocket, the server resizes
+  the PTY to the client's reported dimensions and asks tmux to
+  `refresh-client`. Those bytes flow through aurex's capture goroutine
+  and broadcast to every connected subscriber, painting current screen
+  state at the correct size — no snapshot/replay race.
 - **Ghostty-web renderer.** libghostty compiled to WASM — real VT100,
   grapheme handling, the works.
 - **Tailscale-issued real cert.** When Tailscale is present aurex pulls
@@ -191,46 +192,6 @@ machine of the same OS/arch and run.
 
 ---
 
-## Agent hooks
-
-To trigger the aura and push without relying on output regex, agents
-POST to a localhost endpoint with the **tmux session name** they're
-running inside:
-
-```bash
-curl -s -X POST http://localhost:7681/api/hook/aura \
-  -H 'Content-Type: application/json' \
-  -d "{\"active\": true, \"reason\": \"Claude is waiting for input\", \"session\": \"$(tmux display-message -p '#S')\"}"
-```
-
-The `session` field is required when multiple sessions exist — the
-server needs to know which session's ring to glow. `tmux display-message
--p '#S'` returns the current tmux session name (e.g. `aurex-958dfcfb`)
-when the command runs inside one, which is exactly what aurex uses
-internally.
-
-For Claude Code, add to `.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "Stop": [{
-      "matcher": "",
-      "hooks": [{
-        "type": "command",
-        "command": "curl -s -X POST http://localhost:7681/api/hook/aura -H 'Content-Type: application/json' -d \"{\\\"active\\\":true,\\\"reason\\\":\\\"Claude is waiting for input\\\",\\\"session\\\":\\\"$(tmux display-message -p '#S' 2>/dev/null)\\\"}\""
-      }]
-    }]
-  }
-}
-```
-
-If the hook is missing or has no session field and you have multiple
-sessions, aurex logs `hook: no session match for "" (active sessions:
-[...])`. Use that to verify the names you should send.
-
----
-
 ## Mobile
 
 Open the aurex URL on your phone. Tap **Notifications** in the
@@ -269,6 +230,9 @@ First run writes `aurex.config.json` in the working directory. Defaults:
   "password": "changeme",
   "defaultShell": "bash",
   "tmuxPrefix": "aurex",
+  "tls": true,
+  "tlsCertFile": "aurex.cert.pem",
+  "tlsKeyFile": "aurex.key.pem",
   "httpRedirectPort": 7680,
   "tailscale": "auto",
   "tailscaleCertFile": "aurex.ts.cert.pem",
@@ -276,6 +240,12 @@ First run writes `aurex.config.json` in the working directory. Defaults:
   "pushSubscriptionsFile": "aurex.subscriptions.json"
 }
 ```
+
+`tls` controls the self-signed cert path: when `true`, aurex generates
+`tlsCertFile` + `tlsKeyFile` on first run if they don't exist and serves
+HTTPS. When `false`, aurex serves plain HTTP and push won't work.
+Tailscale (when enabled) takes precedence — `tlsCertFile`/`tlsKeyFile`
+are unused while Tailscale is supplying a real cert.
 
 VAPID push keys are generated and persisted on first run. Don't
 regenerate — that invalidates every push subscription.
