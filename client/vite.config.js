@@ -12,6 +12,10 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    emptyOutDir: true,
+    // emptyOutDir would wipe the dir on every build, including the
+    // .gitkeep placeholder we track so go:embed has something to embed
+    // in a fresh clone. Vite reuses content-hashed filenames so leaving
+    // stale chunks here is fine.
+    emptyOutDir: false,
   },
 });
