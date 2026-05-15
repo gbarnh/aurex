@@ -1,7 +1,8 @@
 # aurex
 
-> Remote orchestration for your AI coding agents. Run Claude Code (or Codex,
-> or Aider) on your laptop; watch and steer it from your phone.
+> Remote, OS-agnostic orchestration for your AI coding agents. Run Claude
+> Code (or Codex, or Aider) on your laptop; watch and steer it from any
+> device with a browser.
 
 Single Go binary. Self-hosted. MIT.
 
@@ -9,28 +10,31 @@ Single Go binary. Self-hosted. MIT.
 
 ## What is this
 
-[cmux](https://github.com/manaflow-ai/cmux) solves a real problem: when
-you've got five Claude Code agents running in five panes, you can't tell
-which one is asking you something. cmux adds a notification ring + a
-sidebar with git/PR/cwd context to a native macOS terminal so the
-"who needs me?" question takes a glance instead of a hunt.
+[cmux](https://github.com/manaflow-ai/cmux) is a great answer to a real
+problem: when you've got five Claude Code agents running in five panes,
+you can't tell which one is asking you something. cmux solves that with
+a native macOS terminal that adds a notification ring + a sidebar with
+git/PR/cwd context. Several people are working on Linux ports.
 
-Aurex solves the same problem from a different direction. It's the same
-idea — animated ring on the active-prompt session, sidebar with
-branch/cwd, ghostty-based rendering — shaped as a **self-hosted browser
-app you can reach over Tailscale**. The agents still live on your
-laptop. The control surface comes with you.
+**Aurex skips the port-per-OS problem entirely.** The server is a single
+Go binary that runs on anything with tmux + a Unix PTY (Linux, macOS,
+BSD, WSL). The client is the *browser* — which means the same polished
+experience on a Mac, a Linux box, a Windows desktop, an iPad, an
+Android phone, or your wife's Chromebook. There's no "wait for the
+Linux build" because there's nothing OS-specific to build.
+
+Same idea cmux is famous for — animated ring on the active-prompt
+session, sidebar with branch/cwd, ghostty-based rendering — but shaped
+as a self-hosted web app you can reach over Tailscale from anywhere.
+The agents still live on your laptop. The control surface comes with
+you.
 
 The workflow this is built for:
 
 - **Laptop**: agents run, do their thing for minutes-to-hours.
-- **You**: anywhere — couch, errands, on a different machine.
+- **You**: anywhere — couch, errands, a different machine, on cellular.
 - **Phone**: buzzes via web push when an agent hits a y/n prompt.
   Tap → land in that session's terminal. Type `y`, walk away.
-
-If you're already at your desk, cmux is probably the better experience —
-native, sharper, no browser tab. Aurex is for when you need to *not* be
-at your desk.
 
 ---
 
