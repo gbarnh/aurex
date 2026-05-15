@@ -9,19 +9,28 @@ Single Go binary. Self-hosted. MIT.
 
 ## What is this
 
-If you've used a tool like [Mux/cmux](https://github.com/coder/mux) for
-running multiple agentic coding sessions in parallel on one machine, aurex
-is the **remote-access counterpart**. The agents still live on your
-laptop. Aurex puts a browser-based terminal in front of every tmux
-session, sends a web push to your phone when an agent is waiting for
-input, and deep-links you back to the exact session that asked.
+[cmux](https://github.com/manaflow-ai/cmux) solves a real problem: when
+you've got five Claude Code agents running in five panes, you can't tell
+which one is asking you something. cmux adds a notification ring + a
+sidebar with git/PR/cwd context to a native macOS terminal so the
+"who needs me?" question takes a glance instead of a hunt.
 
-The intended workflow:
+Aurex solves the same problem from a different direction. It's the same
+idea — animated ring on the active-prompt session, sidebar with
+branch/cwd, ghostty-based rendering — shaped as a **self-hosted browser
+app you can reach over Tailscale**. The agents still live on your
+laptop. The control surface comes with you.
+
+The workflow this is built for:
 
 - **Laptop**: agents run, do their thing for minutes-to-hours.
-- **You**: anywhere — couch, errands, in front of a different computer.
-- **Phone**: buzzes when claude/codex/aider hits a y/n prompt. Tap → land
-  in that session's terminal. Type `y`, walk away.
+- **You**: anywhere — couch, errands, on a different machine.
+- **Phone**: buzzes via web push when an agent hits a y/n prompt.
+  Tap → land in that session's terminal. Type `y`, walk away.
+
+If you're already at your desk, cmux is probably the better experience —
+native, sharper, no browser tab. Aurex is for when you need to *not* be
+at your desk.
 
 ---
 
