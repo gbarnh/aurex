@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -48,6 +49,7 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/sessions", s.handleCreateSession)
 		r.Patch("/sessions/{sessionID}", s.handleRenameSession)
 		r.Delete("/sessions/{sessionID}", s.handleDeleteSession)
+		r.Get("/sessions/{sessionID}/transcript", s.handleTranscript)
 		r.Get("/push/vapid-public-key", s.handleVapidPublicKey)
 		r.Post("/push/subscribe", s.handleSubscribe)
 		r.Post("/push/test", s.handlePushTest)
@@ -142,6 +144,68 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ANSI strippers. Returns whatever's in the per-session ring buffer with all
+// terminal control sequences removed — gives back a plain-text approximation
+// of everything that was sent to the PTY since the buffer was last cleared.
+//
+// We compile the regexes once package-wide rather than per request so a
+// transcript fetch isn't paying setup cost.
+var (
+	// OSC: ESC ] ... BEL  (or ESC ] ... ESC \) — title sets, hyperlinks, etc.
+	// Match longest sequences first so their ESC byte isn't picked off by a
+	// shorter rule before the full sequence is recognized.
+	stripOSC = regexp.MustCompile("\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)")
+	// DCS / SOS / PM / APC: ESC {P,X,^,_} ... ST (terminated by ESC\ or BEL).
+	stripDCS = regexp.MustCompile("\x1b[PX^_][^\x1b\x07]*(?:\x07|\x1b\\\\)")
+	// CSI: ESC [ ... letter — covers SGR colors, cursor movement, erase, etc.
+	stripCSI = regexp.MustCompile("\x1b\\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]")
+	// Character-set designation: ESC ( X / ESC ) X / ESC * X / ESC + X / ESC % X / ESC - X / ESC . X
+	stripCharset = regexp.MustCompile("\x1b[()*+%\\-.][0-9A-Za-z@]")
+	// Two-byte ESC sequences (ESC followed by a single final byte).
+	stripESC = regexp.MustCompile("\x1b[@-Z\\\\-_=>78cDEHMNOPZ]")
+	// Other unprintable bytes — keep \t \n \r, drop everything else below 0x20
+	// plus DEL. Any stray ESC left over also goes via this catch-all.
+	stripNonPrint = regexp.MustCompile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+)
+
+func stripAnsi(s string) string {
+	// Order matters: strip the longer, more specific sequences first so their
+	// leading ESC byte isn't picked off by a shorter rule (or the non-print
+	// catch-all) before the full sequence is recognized.
+	s = stripOSC.ReplaceAllString(s, "")
+	s = stripDCS.ReplaceAllString(s, "")
+	s = stripCSI.ReplaceAllString(s, "")
+	s = stripCharset.ReplaceAllString(s, "")
+	s = stripESC.ReplaceAllString(s, "")
+	s = stripNonPrint.ReplaceAllString(s, "")
+	// Treat carriage returns as line breaks so TUI redraws that overwrite a
+	// line via \r become separate lines in the transcript rather than
+	// silently swallowed.
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	return s
+}
+
+func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "sessionID")
+	sess := s.store.Get(id)
+	if sess == nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if sess.buffer == nil {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	raw, _ := sess.buffer.ReadFrom(sess.buffer.Start())
+	text := stripAnsi(string(raw))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(text))
 }
 
 func (s *Server) handleVapidPublicKey(w http.ResponseWriter, r *http.Request) {

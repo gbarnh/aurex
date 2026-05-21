@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar.jsx';
 import Terminal from './components/Terminal.jsx';
 import Toolbar, { ctrlOf } from './components/Toolbar.jsx';
 import PushPanel from './components/PushPanel.jsx';
+import TranscriptPanel from './components/TranscriptPanel.jsx';
 import { useSession } from './hooks/useSession.js';
 import { usePush } from './hooks/usePush.js';
 
@@ -52,6 +53,7 @@ export default function App() {
   const [activeId, setActiveId] = useState(getInitialSessionId());
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [pushPanelOpen, setPushPanelOpen] = useState(false);
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [ctrlArmed, setCtrlArmed] = useState(false);
   const termHandleRef = useRef(null);
 
@@ -222,6 +224,16 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2 text-xs">
             <button
+              onClick={() => setTranscriptOpen(true)}
+              onMouseDown={(e) => e.preventDefault()}
+              onTouchStart={(e) => e.preventDefault()}
+              disabled={!activeSession}
+              className="rounded-md border border-line bg-bg px-2 py-1 text-[11px] text-zinc-300 disabled:opacity-40"
+              title="Full text transcript (includes content lost to TUI redraws)"
+            >
+              transcript
+            </button>
+            <button
               onClick={() => setPushPanelOpen(true)}
               onMouseDown={(e) => e.preventDefault()}
               onTouchStart={(e) => e.preventDefault()}
@@ -275,6 +287,13 @@ export default function App() {
       </main>
 
       {pushPanelOpen && <PushPanel push={push} onClose={() => setPushPanelOpen(false)} />}
+      {transcriptOpen && activeSession && (
+        <TranscriptPanel
+          sessionId={activeSession.id}
+          sessionName={activeSession.name}
+          onClose={() => setTranscriptOpen(false)}
+        />
+      )}
     </div>
   );
 }

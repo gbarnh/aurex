@@ -40,6 +40,19 @@ func TmuxNewSession(name, shell string) error {
 	// shell hook. allow-passthrough is opt-in for safety reasons (escape
 	// injection) — fine for aurex since we control the capture endpoint.
 	_ = exec.Command("tmux", "set-option", "-t", name, "allow-passthrough", "on").Run()
+	// Disable the alternate-screen buffer for programs in this pane. When a
+	// TUI like Claude Code enters alt-screen, its rendering happens in a
+	// separate buffer that isn't preserved on exit and isn't visible to
+	// scrollback. With alternate-screen off, tmux ignores smcup/rmcup
+	// requests from the program, so its output stays in the normal screen
+	// and scrolls into scrollback naturally — the user can then scroll back
+	// through Claude Code's full response on mobile.
+	_ = exec.Command("tmux", "set-window-option", "-t", name, "alternate-screen", "off").Run()
+	// Roomier per-pane scrollback. Default is 2000 lines; we set 50000 so a
+	// long Claude response (hundreds of lines plus reasoning text) stays
+	// retrievable via copy-mode / via ghostty's own scrollback (which sees
+	// what tmux emits).
+	_ = exec.Command("tmux", "set-option", "-t", name, "history-limit", "50000").Run()
 	return nil
 }
 
